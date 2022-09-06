@@ -24,6 +24,14 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type RequestJob struct {}
+
+type RequestJobRply struct {
+	FileName string
+	NReduce int
+	MapId int
+}
+
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

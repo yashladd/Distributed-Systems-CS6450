@@ -1,10 +1,16 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	// "sort"
+	"strconv"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -13,6 +19,13 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -24,18 +37,76 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
+	// for {
+	// }
 	// Your worker implementation here.
+	args := RequestJob{}
+	reply := RequestJobRply{}
+
+	ret := call("Coordinator.AllocateJob", &args, &reply)
+
+	if !ret {
+		log.Fatalf("Error connecting to master")
+		return
+	}
+
+	nReduce := reply.NReduce
+	mapId := reply.MapId
+
+	PerformMap(reply.FileName, mapf, mapId, nReduce)
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
+}
+
+func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nReduce int) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		log.Fatalf("Could not open file %v\n", file)
+	}
+	content, err := ioutil.ReadAll(file)
+	// logError(err, "Could not read file %v\n", file)
+	if err != nil {
+		log.Fatalf("Could not read file %v\n", file)
+	}
+	file.Close()
+	kva := mapf(fileName, string(content))
+
+	mapFiles := make([]*os.File, 0, nReduce)
+
+	// path, err := os.Getwd()
+	// if err != nil {
+	// 	log.Println("Couldn't get corrent working dir", err)
+	// }
+	// currentDir := path + "/"
+
+	for i := 0; i < nReduce; i++ {
+		file, _ := os.Create("mr-" + strconv.Itoa(mapId) + "-" + strconv.Itoa(i))
+		mapFiles = append(mapFiles, file)
+	}
+
+	// sort.Sort(ByKey(kva))
+
+	for _, kv := range kva {
+		i := ihash(kv.Key) % nReduce
+		// jsonKV, _ := json.MarshalIndent(kv, "", "")
+		enc := json.NewEncoder(mapFiles[i])
+		err := enc.Encode(&kv)
+		if err != nil {
+			log.Fatalf("Could not encode key value pair ->  %v %v", kv.Key, kv.Value)
+		}
+	}
+
+	for i := 0; i < nReduce; i++ {
+		mapFiles[i].Close()
+	}
 }
 
 //
