@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+
 	// "sort"
 	"strconv"
 )
@@ -46,20 +47,32 @@ func Worker(mapf func(string, string) []KeyValue,
 	// for {
 	// }
 	// Your worker implementation here.
-	args := RequestJob{}
-	reply := RequestJobRply{}
 
-	ret := call("Coordinator.AllocateJob", &args, &reply)
+	for {
 
-	if !ret {
-		log.Fatalf("Error connecting to master")
-		return
+		args := RequestJob{}
+		reply := RequestJobReply{}
+
+		ret := call("Coordinator.AllocateJob", &args, &reply)
+
+		if !ret {
+			log.Fatalf("Error connecting to master")
+			// TODO: Is return required?
+			// return
+		}
+
+		// TODO: terminating condition
+		// TODO: Worker timeout condition 10 secs
+
+		if reply.IsMapJob {
+			nReduce := reply.NReduce
+			mapId := reply.MapId
+			fileName := reply.FileName
+			PerformMap(fileName, mapf, mapId, nReduce)
+			NotifyMapJobCompleted(fileName)
+		}
+
 	}
-
-	nReduce := reply.NReduce
-	mapId := reply.MapId
-
-	PerformMap(reply.FileName, mapf, mapId, nReduce)
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
@@ -106,6 +119,17 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 
 	for i := 0; i < nReduce; i++ {
 		mapFiles[i].Close()
+	}
+}
+
+func NotifyMapJobCompleted(fileName string) {
+	args := CompletedJob{}
+	args.IsMapJob = true
+	args.FileName = fileName
+	reply := CompletedJobReply{}
+	ret := call("Coordinator.JobCompleted", &args, &reply)
+	if !ret {
+		log.Fatal("Errror sending complted map status to coordinator")
 	}
 }
 

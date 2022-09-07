@@ -26,11 +26,21 @@ type ExampleReply struct {
 
 type RequestJob struct {}
 
-type RequestJobRply struct {
+type RequestJobReply struct {
 	FileName string
 	NReduce int
 	MapId int
+	IsMapJob bool
+	IsReduceJob bool
 }
+
+type CompletedJob struct {
+	IsMapJob bool
+	FileName string
+	IsReduceJob bool
+}
+
+type CompletedJobReply struct {}
 
 
 // Cook up a unique-ish UNIX-domain socket name

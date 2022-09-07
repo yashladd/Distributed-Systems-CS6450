@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 type JobStatus int
@@ -23,6 +24,7 @@ type Coordinator struct {
 	fileToMapId map[string]int
 	mapTasks    int
 	nReduce     int
+	mu          sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -37,22 +39,38 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobRply) error {
-
+func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) error {
+	c.mu.Lock()
 	if c.mapTasks > 0 {
 		for file, status := range c.mapStatus {
 			if status == int(Pending) {
-				fmt.Println("MapID", c.fileToMapId[file])
+				// fmt.Println("MapID", c.fileToMapId[file])
 				reply.FileName = file
 				reply.MapId = c.fileToMapId[file]
 				reply.NReduce = c.nReduce
+				reply.IsMapJob = true
 				//mark map job in progress
 				c.mapStatus[file] = int(InProgress)
-				// break
+				break
 			}
 		}
 	}
 
+	c.mu.Unlock()
+
+	return nil
+}
+
+func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply) error {
+	c.mu.Lock()
+	if args.IsMapJob {
+		file := args.FileName
+		c.mapStatus[file] = int(Completed)
+		// c.mapTasks = c.mapTasks - 1
+		c.mapTasks -= 1
+	}
+
+	c.mu.Unlock()
 	return nil
 }
 
@@ -102,7 +120,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.mapStatus[file] = int(Pending)
 		c.fileToMapId[file] = fileNumer
 		fileNumer += 1
-	}	
+	}
 
 	fmt.Println("Map status", c.mapStatus)
 	fmt.Println("fileTomapId", c.fileToMapId)
