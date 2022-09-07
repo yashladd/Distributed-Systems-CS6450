@@ -20,11 +20,14 @@ const (
 
 type Coordinator struct {
 	// Your definitions here.
-	mapStatus   map[string]int
-	fileToMapId map[string]int
-	mapTasks    int
-	nReduce     int
-	mu          sync.Mutex
+	mapStatus    map[string]int
+	fileToMapId  map[string]int
+	mapJobs      int
+	reduceStatus map[int]int
+	reduceJobs   int
+	nReduce      int
+	nMaps        int
+	mu           sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -41,7 +44,7 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) error {
 	c.mu.Lock()
-	if c.mapTasks > 0 {
+	if c.mapJobs > 0 {
 		for file, status := range c.mapStatus {
 			if status == int(Pending) {
 				// fmt.Println("MapID", c.fileToMapId[file])
@@ -51,6 +54,17 @@ func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) erro
 				reply.IsMapJob = true
 				//mark map job in progress
 				c.mapStatus[file] = int(InProgress)
+				break
+			}
+		}
+	} else if c.reduceJobs > 0 {
+		for job, status := range c.reduceStatus {
+			if status == int(Pending) {
+				reply.IsReduceJob = true
+				reply.ReduceId = job
+				reply.NReduce = c.nReduce
+				reply.MMaps = c.nMaps
+				c.reduceStatus[job] = int(InProgress)
 				break
 			}
 		}
@@ -66,8 +80,11 @@ func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply)
 	if args.IsMapJob {
 		file := args.FileName
 		c.mapStatus[file] = int(Completed)
-		// c.mapTasks = c.mapTasks - 1
-		c.mapTasks -= 1
+		c.mapJobs -= 1
+	} else if args.IsReduceJob {
+		reduceJob := args.ReduceId
+		c.reduceStatus[reduceJob] = int(Completed)
+		c.reduceJobs -= 1
 	}
 
 	c.mu.Unlock()
@@ -110,9 +127,12 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	// Your code here.
-	c.mapTasks = len(files)
+	c.mapJobs = len(files)
 	c.mapStatus = make(map[string]int)
 	c.fileToMapId = make(map[string]int)
+	c.reduceStatus = make(map[int]int)
+	c.reduceJobs = nReduce
+	c.nMaps = len(files)
 	c.nReduce = nReduce
 
 	fileNumer := 0
@@ -120,6 +140,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.mapStatus[file] = int(Pending)
 		c.fileToMapId[file] = fileNumer
 		fileNumer += 1
+	}
+
+	for i := 0; i < nReduce; i++ {
+		c.reduceStatus[i] = int(Pending)
 	}
 
 	fmt.Println("Map status", c.mapStatus)

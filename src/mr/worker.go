@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 
 	// "sort"
 	"strconv"
@@ -70,6 +71,12 @@ func Worker(mapf func(string, string) []KeyValue,
 			fileName := reply.FileName
 			PerformMap(fileName, mapf, mapId, nReduce)
 			NotifyMapJobCompleted(fileName)
+		} else if reply.IsReduceJob {
+			nReduce := reply.NReduce
+			nMaps := reply.MMaps
+			reduceId := reply.ReduceId
+			PerformReduce(reducef, nMaps, nReduce, reduceId)
+			NotifyReduceJobCompleted(reduceId)
 		}
 
 	}
@@ -126,6 +133,63 @@ func NotifyMapJobCompleted(fileName string) {
 	args := CompletedJob{}
 	args.IsMapJob = true
 	args.FileName = fileName
+	reply := CompletedJobReply{}
+	ret := call("Coordinator.JobCompleted", &args, &reply)
+	if !ret {
+		log.Fatal("Errror sending complted map status to coordinator")
+	}
+}
+
+
+func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduceId int) {
+	intermediate := []KeyValue{}
+	for i := 0; i < nMaps; i += 1 {
+		fileName := "mr-" + strconv.Itoa(i)+"-"+strconv.Itoa(reduceId)
+		file, err := os.Open(fileName)
+		dec := json.NewDecoder(file)
+		if err != nil {
+			log.Fatalf("Error reading file %v for reduce", fileName)
+		}
+  		for {
+			var kv KeyValue
+    		if err := dec.Decode(&kv); err != nil {
+     	 		break
+    		}	
+  			intermediate = append(intermediate, kv)
+  		}
+		file.Close()
+	}
+	sort.Sort(ByKey(intermediate))
+
+	oname := "mr-out-" + strconv.Itoa(reduceId)
+	ofile, _ := os.Create(oname)
+
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
+
+}
+
+func NotifyReduceJobCompleted(reduceId int) {
+	args := CompletedJob{}
+	args.IsReduceJob = true
+	args.ReduceId = reduceId
 	reply := CompletedJobReply{}
 	ret := call("Coordinator.JobCompleted", &args, &reply)
 	if !ret {
