@@ -1,7 +1,7 @@
 package mr
 
 import (
-	"fmt"
+	// "fmt"
 	"log"
 	"net"
 	"net/http"
@@ -20,14 +20,21 @@ const (
 
 type Coordinator struct {
 	// Your definitions here.
-	mapStatus    map[string]int
-	fileToMapId  map[string]int
-	mapJobs      int
+	// Mapping for status and mapid of map jobs
+	mapStatus   map[string]int
+	fileToMapId map[string]int
+
+	// Mapping for recude job id to reduce status
 	reduceStatus map[int]int
-	reduceJobs   int
-	nReduce      int
-	nMaps        int
-	mu           sync.Mutex
+
+	// Counters to track remaining map/reduce jobs
+	mapJobs    int
+	reduceJobs int
+
+	//Consts based on num files and num reduce
+	nReduce int
+	nMaps   int
+	mu      sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -79,13 +86,21 @@ func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply)
 	c.mu.Lock()
 	if args.IsMapJob {
 		file := args.FileName
-		c.mapStatus[file] = int(Completed)
-		c.mapJobs -= 1
+		if c.mapStatus[file] == int(InProgress) && c.mapJobs > 0 {
+			c.mapStatus[file] = int(Completed)
+			c.mapJobs -= 1
+		}
 	} else if args.IsReduceJob {
 		reduceJob := args.ReduceId
-		c.reduceStatus[reduceJob] = int(Completed)
-		c.reduceJobs -= 1
+		if c.reduceStatus[reduceJob] == int(InProgress) && c.reduceJobs > 0 {
+			c.reduceStatus[reduceJob] = int(Completed)
+			c.reduceJobs -= 1
+		}
 	}
+
+	allJobssCompleted := c.mapJobs == 0 && c.reduceJobs == 0
+
+	reply.Terminate = allJobssCompleted
 
 	c.mu.Unlock()
 	return nil
@@ -112,9 +127,12 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-
 	// Your code here.
+	c.mu.Lock()
+
+	ret := c.mapJobs == 0 && c.reduceJobs == 0
+
+	c.mu.Unlock()
 
 	return ret
 }
@@ -146,10 +164,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		c.reduceStatus[i] = int(Pending)
 	}
 
-	fmt.Println("Map status", c.mapStatus)
-	fmt.Println("fileTomapId", c.fileToMapId)
-	fmt.Println("Pending__pending", Pending)
-	fmt.Println("Pending__int", int(Pending))
+	// fmt.Println("Map status", c.mapStatus)
+	// fmt.Println("fileTomapId", c.fileToMapId)
+	// fmt.Println("Pending__pending", Pending)
+	// fmt.Println("Pending__int", int(Pending))
 
 	c.server()
 	return &c

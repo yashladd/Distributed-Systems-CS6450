@@ -44,9 +44,6 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// for {
-	// }
 	// Your worker implementation here.
 
 	for {
@@ -55,7 +52,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		reply := RequestJobReply{}
 
 		ret := call("Coordinator.AllocateJob", &args, &reply)
-
+		quit := false
 		if !ret {
 			log.Fatalf("Error connecting to master")
 			// TODO: Is return required?
@@ -70,15 +67,19 @@ func Worker(mapf func(string, string) []KeyValue,
 			mapId := reply.MapId
 			fileName := reply.FileName
 			PerformMap(fileName, mapf, mapId, nReduce)
-			NotifyMapJobCompleted(fileName)
+			quit =  NotifyMapJobCompleted(fileName)
 		} else if reply.IsReduceJob {
 			nReduce := reply.NReduce
 			nMaps := reply.MMaps
 			reduceId := reply.ReduceId
 			PerformReduce(reducef, nMaps, nReduce, reduceId)
-			NotifyReduceJobCompleted(reduceId)
+			quit = NotifyReduceJobCompleted(reduceId)
 		}
 
+		if quit {
+			fmt.Println("Exiting --> All map reduce jobs completed")
+			break
+		}
 	}
 
 	// uncomment to send the Example RPC to the coordinator.
@@ -129,7 +130,7 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 	}
 }
 
-func NotifyMapJobCompleted(fileName string) {
+func NotifyMapJobCompleted(fileName string) bool {
 	args := CompletedJob{}
 	args.IsMapJob = true
 	args.FileName = fileName
@@ -138,6 +139,8 @@ func NotifyMapJobCompleted(fileName string) {
 	if !ret {
 		log.Fatal("Errror sending complted map status to coordinator")
 	}
+
+  	return reply.Terminate
 }
 
 
@@ -186,7 +189,7 @@ func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduce
 
 }
 
-func NotifyReduceJobCompleted(reduceId int) {
+func NotifyReduceJobCompleted(reduceId int) bool {
 	args := CompletedJob{}
 	args.IsReduceJob = true
 	args.ReduceId = reduceId
@@ -195,6 +198,8 @@ func NotifyReduceJobCompleted(reduceId int) {
 	if !ret {
 		log.Fatal("Errror sending complted map status to coordinator")
 	}
+
+	return reply.Terminate
 }
 
 //
