@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"time"
 
 	// "sort"
 	"strconv"
@@ -80,6 +81,9 @@ func Worker(mapf func(string, string) []KeyValue,
 			fmt.Println("Exiting --> All map reduce jobs completed")
 			break
 		}
+
+		time.Sleep(time.Millisecond * 300)
+
 	}
 
 	// uncomment to send the Example RPC to the coordinator.

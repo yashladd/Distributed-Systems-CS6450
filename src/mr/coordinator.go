@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type JobStatus int
@@ -76,9 +77,9 @@ func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) erro
 			}
 		}
 	}
-
 	c.mu.Unlock()
 
+	go c.CheckJobTimeout(reply)
 	return nil
 }
 
@@ -104,6 +105,27 @@ func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply)
 
 	c.mu.Unlock()
 	return nil
+}
+
+func (c *Coordinator) CheckJobTimeout(args *RequestJobReply) {
+	// fmt.Println("CJT__before")
+	<-time.After(time.Second * 10)
+	// fmt.Println("CJT__after")
+	c.mu.Lock()
+	if args.IsMapJob {
+		file := args.FileName
+		// fmt.Println("CJT__file", file)
+		if c.mapStatus[file] == int(InProgress) {
+			c.mapStatus[file] = int(Pending)
+		}
+	} else if args.IsReduceJob {
+		reduceId := args.ReduceId
+		// fmt.Println("CJT__reduceId", reduceId)
+		if c.reduceStatus[reduceId] == int(InProgress) {
+			c.reduceStatus[reduceId] = int(Pending)
+		}
+	}
+	c.mu.Unlock()
 }
 
 //
