@@ -95,7 +95,7 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 	mapFiles := make([]*os.File, 0, nReduce)
 
 	for i := 0; i < nReduce; i++ {
-		tempFileName := fmt.Sprintf("mr-temp-%d", i)
+		tempFileName := fmt.Sprintf("mr-temp-%d-", i)
 		file, _ := ioutil.TempFile("./", tempFileName)
 		mapFiles = append(mapFiles, file)
 	}

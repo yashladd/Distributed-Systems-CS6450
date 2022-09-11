@@ -165,32 +165,9 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	// Your code here.
-	// c.mu.Lock()
-
-	// istheremap := false
-	// istherereduce := false
-
-	// for _, status := range c.mapStatus {
-	// 	if status != int(Completed) {
-	// 		istheremap = true
-	// 		break
-	// 	}
-	// }
-
-	// for _, status := range c.reduceStatus {
-	// 	if status != int(Completed) {
-	// 		istherereduce = true
-	// 		break
-	// 	}
-	// }
-	// c.mu.Unlock()
-
 	pendingMapJobs , pendingReduceJobs := c.checkPendingMapReduceJobs()
 
-
 	ret := !(pendingMapJobs || pendingReduceJobs)
-
 
 	return ret
 }
