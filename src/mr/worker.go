@@ -9,8 +9,6 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
-	"strconv"
-	"time"
 )
 
 //
@@ -51,15 +49,9 @@ func Worker(mapf func(string, string) []KeyValue,
 		reply := RequestJobReply{}
 
 		ret := call("Coordinator.AllocateJob", &args, &reply)
-		quit := false
 		if !ret {
 			log.Fatalf("Error connecting to master")
-			// TODO: Is return required?
-			// return
 		}
-
-		// TODO: terminating condition
-		// TODO: Worker timeout condition 10 secs
 
 		if reply.IsMapJob {
 			// fmt.Println("map assigned", reply.MapId, reply.FileName)
@@ -67,7 +59,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			mapId := reply.MapId
 			fileName := reply.FileName
 			PerformMap(fileName, mapf, mapId, nReduce)
-			quit = NotifyMapJobCompleted(fileName)
+			NotifyMapJobCompleted(fileName)
 		} else if reply.IsReduceJob {
 			// fmt.Println("reduce assigned", reply.ReduceId)
 
@@ -75,23 +67,12 @@ func Worker(mapf func(string, string) []KeyValue,
 			nMaps := reply.MMaps
 			reduceId := reply.ReduceId
 			PerformReduce(reducef, nMaps, nReduce, reduceId)
-			quit = NotifyReduceJobCompleted(reduceId)
+			NotifyReduceJobCompleted(reduceId)
 		} else if reply.JobsDone {
-			fmt.Println("All mapreduce jobs completed")
-			// time.Sleep(time.Millisecond * 100)
+			// fmt.Println("All mapreduce jobs completed")
+			// Return if no map reduce jobs to be allocated
 			return
 		}
-
-		// TODO: All workers allocated need a new reply ? and to be handled here ?
-
-		if quit {
-			fmt.Println("Exiting --> All map reduce jobs completed")
-			// time.Sleep(time.Millisecond * 300)
-			return
-		}
-
-		time.Sleep(time.Second * 1)
-
 	}
 
 	// uncomment to send the Example RPC to the coordinator.
@@ -105,7 +86,6 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 		log.Fatalf("Could not open file %v\n", file)
 	}
 	content, err := ioutil.ReadAll(file)
-	// logError(err, "Could not read file %v\n", file)
 	if err != nil {
 		log.Fatalf("Could not read file %v\n", file)
 	}
@@ -114,22 +94,14 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 
 	mapFiles := make([]*os.File, 0, nReduce)
 
-	// path, err := os.Getwd()
-	// if err != nil {
-	// 	log.Println("Couldn't get corrent working dir", err)
-	// }
-	// currentDir := path + "/"
-
 	for i := 0; i < nReduce; i++ {
-		file, _ := ioutil.TempFile("./", "temp")
+		tempFileName := fmt.Sprintf("mr-temp-%d", i)
+		file, _ := ioutil.TempFile("./", tempFileName)
 		mapFiles = append(mapFiles, file)
 	}
 
-	// sort.Sort(ByKey(kva))
-
 	for _, kv := range kva {
 		i := ihash(kv.Key) % nReduce
-		// jsonKV, _ := json.MarshalIndent(kv, "", "")
 		enc := json.NewEncoder(mapFiles[i])
 		err := enc.Encode(&kv)
 		if err != nil {
@@ -138,14 +110,13 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 	}
 
 	for i := 0; i < nReduce; i++ {
-		flname := "mr-" + strconv.Itoa(mapId) + "-" + strconv.Itoa(i)
-		// fmt.Println("flname", flname)
-		os.Rename(mapFiles[i].Name(), flname)
+		mapFileName := fmt.Sprintf("mr-%d-%d", mapId, i)
+		os.Rename(mapFiles[i].Name(), mapFileName)
 		mapFiles[i].Close()
 	}
 }
 
-func NotifyMapJobCompleted(fileName string) bool {
+func NotifyMapJobCompleted(fileName string) {
 	args := CompletedJob{}
 	args.IsMapJob = true
 	args.FileName = fileName
@@ -154,14 +125,12 @@ func NotifyMapJobCompleted(fileName string) bool {
 	if !ret {
 		log.Fatal("Errror sending complted map status to coordinator")
 	}
-
-	return reply.Terminate
 }
 
 func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduceId int) {
 	intermediate := []KeyValue{}
 	for i := 0; i < nMaps; i += 1 {
-		fileName := "mr-" + strconv.Itoa(i) + "-" + strconv.Itoa(reduceId)
+		fileName := fmt.Sprintf("mr-%d-%d", i, reduceId)
 		file, err := os.Open(fileName)
 		dec := json.NewDecoder(file)
 		if err != nil {
@@ -176,10 +145,11 @@ func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduce
 		}
 		file.Close()
 	}
+
 	sort.Sort(ByKey(intermediate))
 
-	oname := "mr-out-" + strconv.Itoa(reduceId)
-	ofile, _ := os.Create(oname)
+	outputFileName := fmt.Sprintf("mr-out-%d", reduceId)
+	ofile, _ := os.Create(outputFileName)
 
 	i := 0
 	for i < len(intermediate) {
@@ -203,7 +173,7 @@ func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduce
 
 }
 
-func NotifyReduceJobCompleted(reduceId int) bool {
+func NotifyReduceJobCompleted(reduceId int) {
 	args := CompletedJob{}
 	args.IsReduceJob = true
 	args.ReduceId = reduceId
@@ -212,8 +182,6 @@ func NotifyReduceJobCompleted(reduceId int) bool {
 	if !ret {
 		log.Fatal("Errror sending complted map status to coordinator")
 	}
-
-	return reply.Terminate
 }
 
 //

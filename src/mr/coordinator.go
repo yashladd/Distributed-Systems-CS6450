@@ -2,7 +2,6 @@ package mr
 
 import (
 	// "fmt"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -29,10 +28,6 @@ type Coordinator struct {
 	// Mapping for recude job id to reduce status
 	reduceStatus map[int]int
 
-	// Counters to track remaining map/reduce jobs
-	mapJobs    int
-	reduceJobs int
-
 	//Consts based on num files and num reduce
 	nReduce int
 	nMaps   int
@@ -52,40 +47,22 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 }
 
 func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) error {
-	c.mu.Lock()
 	// fmt.Println("c.mapjobs", c.mapJobs)
 
-	istheremap := false
-	istherereduce := false
-
-	for _, status := range c.mapStatus {
-		if status != int(Completed) {
-			istheremap = true
-			break
-		}
-	}
-
-	for _, status := range c.reduceStatus {
-		if status != int(Completed) {
-			istherereduce = true
-			break
-		}
-	}
-
-	// fmt.Println("map statuses", c.mapStatus, istheremap)
-
-	if istheremap {
+	pendingMapJobs , pendingReduceJobs := c.checkPendingMapReduceJobs()
+	// fmt.Println("map statuses", c.mapStatus, pendingMapJobs)
+	c.mu.Lock()
+	if pendingMapJobs {
 		// fmt.Println("assigning map")
 		for file, status := range c.mapStatus {
 			if status == int(Pending) {
-				// fmt.Println("MapID", c.fileToMapId[file])
 				reply.FileName = file
 				reply.MapId = c.fileToMapId[file]
 				reply.NReduce = c.nReduce
 				reply.IsMapJob = true
 				//mark map job in progress
 				c.mapStatus[file] = int(InProgress)
-				fmt.Println("map assigned", reply.MapId)
+				// fmt.Println("map assigned", reply.MapId)
 				go c.CheckJobTimeout(true, false, reply.FileName, 0)
 				break
 			} 
@@ -94,7 +71,7 @@ func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) erro
 			// }
 
 		}
-	} else if istherereduce {
+	} else if pendingReduceJobs {
 		// fmt.Println("assigning reduce")
 
 		for job, status := range c.reduceStatus {
@@ -129,32 +106,25 @@ func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply)
 	// fmt.Println("Complete job", args)
 	if args.IsMapJob {
 		file := args.FileName
-		// if c.mapStatus[file] == int(InProgress) && c.mapJobs > 0 {
-
 		c.mapStatus[file] = int(Completed)
 		// fmt.Println("map statuses", c.mapStatus)
-		// }
 	} else if args.IsReduceJob {
 		reduceJob := args.ReduceId
-		// if c.reduceStatus[reduceJob] == int(InProgress) && c.reduceJobs > 0 {
 		c.reduceStatus[reduceJob] = int(Completed)
-		// }
 	}
 
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *Coordinator) CheckJobTimeout(mapjob bool, reducejob bool, file string, reduceId int) {
-	// fmt.Println("CJT__before")
+func (c *Coordinator) CheckJobTimeout(isMapJob bool, isReduceJob bool, file string, reduceId int) {
 
 	time.Sleep(time.Second * 10)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	fmt.Println("timing out tasks, checking...", mapjob, reducejob, file, reduceId)
-	if mapjob {
-		// fmt.Println("CJT__file", file)
+	// fmt.Println("timing out tasks, checking...", isMapJob, isReduceJob, file, reduceId)
+	if isMapJob {
 		if c.mapStatus[file] == int(InProgress) {
 			c.mapStatus[file] = int(Pending)
 			// fmt.Println("one more map job added")
@@ -162,8 +132,7 @@ func (c *Coordinator) CheckJobTimeout(mapjob bool, reducejob bool, file string, 
 		// else {
 		// 	fmt.Println("no in progress map tasks")
 		// }
-	} else if reducejob {
-		// fmt.Println("CJT__reduceId", reduceId)
+	} else if isReduceJob {
 		if c.reduceStatus[reduceId] == int(InProgress) {
 			c.reduceStatus[reduceId] = int(Pending)
 			// fmt.Println("one more reduce job added")
@@ -172,34 +141,6 @@ func (c *Coordinator) CheckJobTimeout(mapjob bool, reducejob bool, file string, 
 		// 	fmt.Println("no in progress reduce tasks")
 		// }
 	}
-
-	// fmt.Println("from completed")
-	// return
-
-	// defer timer.Stop()
-
-	// for {
-	// 	select {
-	// 	case <-timer.C:
-
-	// 	default:
-	// 		if args.IsMapJob {
-	// 			file := args.FileName
-	// 			// fmt.Println("CJT__file", file)
-	// 			if c.mapStatus[file] == int(Completed) {
-	// 				return
-	// 			}
-	// 		} else if args.IsReduceJob {
-	// 			reduceId := args.ReduceId
-	// 			// fmt.Println("CJT__reduceId", reduceId)
-	// 			if c.reduceStatus[reduceId] == int(Completed) {
-	// 				return
-	// 			}
-	// 		}
-	// 		// return
-	// 	}
-	// }
-	// // fmt.Println("CJT__after")
 
 }
 
@@ -225,30 +166,57 @@ func (c *Coordinator) server() {
 //
 func (c *Coordinator) Done() bool {
 	// Your code here.
-	c.mu.Lock()
+	// c.mu.Lock()
 
-	istheremap := false
-	istherereduce := false
+	// istheremap := false
+	// istherereduce := false
+
+	// for _, status := range c.mapStatus {
+	// 	if status != int(Completed) {
+	// 		istheremap = true
+	// 		break
+	// 	}
+	// }
+
+	// for _, status := range c.reduceStatus {
+	// 	if status != int(Completed) {
+	// 		istherereduce = true
+	// 		break
+	// 	}
+	// }
+	// c.mu.Unlock()
+
+	pendingMapJobs , pendingReduceJobs := c.checkPendingMapReduceJobs()
+
+
+	ret := !(pendingMapJobs || pendingReduceJobs)
+
+
+	return ret
+}
+
+func (c *Coordinator) checkPendingMapReduceJobs() (bool, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// fmt.Println("c.mapjobs", c.mapJobs)
+
+	pendingMapJobs := false
+	pendingReduceJobs := false
 
 	for _, status := range c.mapStatus {
 		if status != int(Completed) {
-			istheremap = true
+			pendingMapJobs = true
 			break
 		}
 	}
 
 	for _, status := range c.reduceStatus {
 		if status != int(Completed) {
-			istherereduce = true
+			pendingReduceJobs = true
 			break
 		}
 	}
-
-	ret := !(istheremap || istherereduce)
-
-	c.mu.Unlock()
-
-	return ret
+	return pendingMapJobs, pendingReduceJobs
 }
 
 //
@@ -262,7 +230,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.mapStatus = make(map[string]int)
 	c.fileToMapId = make(map[string]int)
 	c.reduceStatus = make(map[int]int)
-	c.reduceJobs = nReduce
 	c.nMaps = len(files)
 	c.nReduce = nReduce
 
@@ -276,11 +243,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	for i := 0; i < nReduce; i++ {
 		c.reduceStatus[i] = int(Pending)
 	}
-
-	// fmt.Println("Map status", c.mapStatus)
-	// fmt.Println("fileTomapId", c.fileToMapId)
-	// fmt.Println("Pending__pending", Pending)
-	// fmt.Println("Pending__int", int(Pending))
 
 	c.server()
 	return &c

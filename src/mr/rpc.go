@@ -46,9 +46,7 @@ type CompletedJob struct {
 	ReduceId    int
 }
 
-type CompletedJobReply struct {
-	Terminate bool
-}
+type CompletedJobReply struct{}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
