@@ -36,6 +36,7 @@ type RequestJobReply struct {
 	IsReduceJob bool
 	ReduceId    int
 	MMaps       int
+	JobsDone    bool
 }
 
 type CompletedJob struct {
@@ -45,7 +46,7 @@ type CompletedJob struct {
 	ReduceId    int
 }
 
-type CompletedJobReply struct{
+type CompletedJobReply struct {
 	Terminate bool
 }
 

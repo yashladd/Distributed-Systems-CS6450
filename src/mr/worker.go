@@ -9,10 +9,8 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
-	"time"
-
-	// "sort"
 	"strconv"
+	"time"
 )
 
 //
@@ -64,25 +62,35 @@ func Worker(mapf func(string, string) []KeyValue,
 		// TODO: Worker timeout condition 10 secs
 
 		if reply.IsMapJob {
+			// fmt.Println("map assigned", reply.MapId, reply.FileName)
 			nReduce := reply.NReduce
 			mapId := reply.MapId
 			fileName := reply.FileName
 			PerformMap(fileName, mapf, mapId, nReduce)
-			quit =  NotifyMapJobCompleted(fileName)
+			quit = NotifyMapJobCompleted(fileName)
 		} else if reply.IsReduceJob {
+			// fmt.Println("reduce assigned", reply.ReduceId)
+
 			nReduce := reply.NReduce
 			nMaps := reply.MMaps
 			reduceId := reply.ReduceId
 			PerformReduce(reducef, nMaps, nReduce, reduceId)
 			quit = NotifyReduceJobCompleted(reduceId)
+		} else if reply.JobsDone {
+			fmt.Println("All mapreduce jobs completed")
+			// time.Sleep(time.Millisecond * 100)
+			return
 		}
+
+		// TODO: All workers allocated need a new reply ? and to be handled here ?
 
 		if quit {
 			fmt.Println("Exiting --> All map reduce jobs completed")
-			break
+			// time.Sleep(time.Millisecond * 300)
+			return
 		}
 
-		time.Sleep(time.Millisecond * 300)
+		time.Sleep(time.Second * 1)
 
 	}
 
@@ -113,7 +121,7 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 	// currentDir := path + "/"
 
 	for i := 0; i < nReduce; i++ {
-		file, _ := os.Create("mr-" + strconv.Itoa(mapId) + "-" + strconv.Itoa(i))
+		file, _ := ioutil.TempFile("./", "temp")
 		mapFiles = append(mapFiles, file)
 	}
 
@@ -130,6 +138,9 @@ func PerformMap(fileName string, mapf func(string, string) []KeyValue, mapId, nR
 	}
 
 	for i := 0; i < nReduce; i++ {
+		flname := "mr-" + strconv.Itoa(mapId) + "-" + strconv.Itoa(i)
+		// fmt.Println("flname", flname)
+		os.Rename(mapFiles[i].Name(), flname)
 		mapFiles[i].Close()
 	}
 }
@@ -144,26 +155,25 @@ func NotifyMapJobCompleted(fileName string) bool {
 		log.Fatal("Errror sending complted map status to coordinator")
 	}
 
-  	return reply.Terminate
+	return reply.Terminate
 }
-
 
 func PerformReduce(reducef func(string, []string) string, nMaps, nReduce, reduceId int) {
 	intermediate := []KeyValue{}
 	for i := 0; i < nMaps; i += 1 {
-		fileName := "mr-" + strconv.Itoa(i)+"-"+strconv.Itoa(reduceId)
+		fileName := "mr-" + strconv.Itoa(i) + "-" + strconv.Itoa(reduceId)
 		file, err := os.Open(fileName)
 		dec := json.NewDecoder(file)
 		if err != nil {
 			log.Fatalf("Error reading file %v for reduce", fileName)
 		}
-  		for {
+		for {
 			var kv KeyValue
-    		if err := dec.Decode(&kv); err != nil {
-     	 		break
-    		}	
-  			intermediate = append(intermediate, kv)
-  		}
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
 		file.Close()
 	}
 	sort.Sort(ByKey(intermediate))

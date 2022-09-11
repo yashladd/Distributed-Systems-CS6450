@@ -2,6 +2,7 @@ package mr
 
 import (
 	// "fmt"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -52,7 +53,29 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) error {
 	c.mu.Lock()
-	if c.mapJobs > 0 {
+	// fmt.Println("c.mapjobs", c.mapJobs)
+
+	istheremap := false
+	istherereduce := false
+
+	for _, status := range c.mapStatus {
+		if status != int(Completed) {
+			istheremap = true
+			break
+		}
+	}
+
+	for _, status := range c.reduceStatus {
+		if status != int(Completed) {
+			istherereduce = true
+			break
+		}
+	}
+
+	// fmt.Println("map statuses", c.mapStatus, istheremap)
+
+	if istheremap {
+		// fmt.Println("assigning map")
 		for file, status := range c.mapStatus {
 			if status == int(Pending) {
 				// fmt.Println("MapID", c.fileToMapId[file])
@@ -62,10 +85,18 @@ func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) erro
 				reply.IsMapJob = true
 				//mark map job in progress
 				c.mapStatus[file] = int(InProgress)
+				fmt.Println("map assigned", reply.MapId)
+				go c.CheckJobTimeout(true, false, reply.FileName, 0)
 				break
-			}
+			} 
+			// else {
+			// 	fmt.Println("no map")
+			// }
+
 		}
-	} else if c.reduceJobs > 0 {
+	} else if istherereduce {
+		// fmt.Println("assigning reduce")
+
 		for job, status := range c.reduceStatus {
 			if status == int(Pending) {
 				reply.IsReduceJob = true
@@ -73,59 +104,103 @@ func (c *Coordinator) AllocateJob(args *RequestJob, reply *RequestJobReply) erro
 				reply.NReduce = c.nReduce
 				reply.MMaps = c.nMaps
 				c.reduceStatus[job] = int(InProgress)
+				go c.CheckJobTimeout(false, true, "", reply.ReduceId)
+				// fmt.Println("reduce assigned")
+
 				break
-			}
+			} 
+			// else {
+			// 	fmt.Println("no reduce")
+			// }
 		}
+
+	} else {
+		// fmt.Println("all jobs done")
+		reply.JobsDone = true
 	}
 	c.mu.Unlock()
 
-	go c.CheckJobTimeout(reply)
+	// go c.CheckJobTimeout(reply)
 	return nil
 }
 
 func (c *Coordinator) JobCompleted(args *CompletedJob, reply *CompletedJobReply) error {
 	c.mu.Lock()
+	// fmt.Println("Complete job", args)
 	if args.IsMapJob {
 		file := args.FileName
-		if c.mapStatus[file] == int(InProgress) && c.mapJobs > 0 {
-			c.mapStatus[file] = int(Completed)
-			c.mapJobs -= 1
-		}
+		// if c.mapStatus[file] == int(InProgress) && c.mapJobs > 0 {
+
+		c.mapStatus[file] = int(Completed)
+		// fmt.Println("map statuses", c.mapStatus)
+		// }
 	} else if args.IsReduceJob {
 		reduceJob := args.ReduceId
-		if c.reduceStatus[reduceJob] == int(InProgress) && c.reduceJobs > 0 {
-			c.reduceStatus[reduceJob] = int(Completed)
-			c.reduceJobs -= 1
-		}
+		// if c.reduceStatus[reduceJob] == int(InProgress) && c.reduceJobs > 0 {
+		c.reduceStatus[reduceJob] = int(Completed)
+		// }
 	}
-
-	allJobssCompleted := c.mapJobs == 0 && c.reduceJobs == 0
-
-	reply.Terminate = allJobssCompleted
 
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *Coordinator) CheckJobTimeout(args *RequestJobReply) {
+func (c *Coordinator) CheckJobTimeout(mapjob bool, reducejob bool, file string, reduceId int) {
 	// fmt.Println("CJT__before")
-	<-time.After(time.Second * 10)
-	// fmt.Println("CJT__after")
+
+	time.Sleep(time.Second * 10)
 	c.mu.Lock()
-	if args.IsMapJob {
-		file := args.FileName
+	defer c.mu.Unlock()
+
+	fmt.Println("timing out tasks, checking...", mapjob, reducejob, file, reduceId)
+	if mapjob {
 		// fmt.Println("CJT__file", file)
 		if c.mapStatus[file] == int(InProgress) {
 			c.mapStatus[file] = int(Pending)
-		}
-	} else if args.IsReduceJob {
-		reduceId := args.ReduceId
+			// fmt.Println("one more map job added")
+		} 
+		// else {
+		// 	fmt.Println("no in progress map tasks")
+		// }
+	} else if reducejob {
 		// fmt.Println("CJT__reduceId", reduceId)
 		if c.reduceStatus[reduceId] == int(InProgress) {
 			c.reduceStatus[reduceId] = int(Pending)
-		}
+			// fmt.Println("one more reduce job added")
+		} 
+		// else {
+		// 	fmt.Println("no in progress reduce tasks")
+		// }
 	}
-	c.mu.Unlock()
+
+	// fmt.Println("from completed")
+	// return
+
+	// defer timer.Stop()
+
+	// for {
+	// 	select {
+	// 	case <-timer.C:
+
+	// 	default:
+	// 		if args.IsMapJob {
+	// 			file := args.FileName
+	// 			// fmt.Println("CJT__file", file)
+	// 			if c.mapStatus[file] == int(Completed) {
+	// 				return
+	// 			}
+	// 		} else if args.IsReduceJob {
+	// 			reduceId := args.ReduceId
+	// 			// fmt.Println("CJT__reduceId", reduceId)
+	// 			if c.reduceStatus[reduceId] == int(Completed) {
+	// 				return
+	// 			}
+	// 		}
+	// 		// return
+	// 	}
+	// }
+	// // fmt.Println("CJT__after")
+
 }
 
 //
@@ -152,7 +227,24 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	c.mu.Lock()
 
-	ret := c.mapJobs == 0 && c.reduceJobs == 0
+	istheremap := false
+	istherereduce := false
+
+	for _, status := range c.mapStatus {
+		if status != int(Completed) {
+			istheremap = true
+			break
+		}
+	}
+
+	for _, status := range c.reduceStatus {
+		if status != int(Completed) {
+			istherereduce = true
+			break
+		}
+	}
+
+	ret := !(istheremap || istherereduce)
 
 	c.mu.Unlock()
 
@@ -167,7 +259,6 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	// Your code here.
-	c.mapJobs = len(files)
 	c.mapStatus = make(map[string]int)
 	c.fileToMapId = make(map[string]int)
 	c.reduceStatus = make(map[int]int)
