@@ -349,23 +349,23 @@ func (rf *Raft) switchToFollower(term int) {
 
 func (rf *Raft) sendHeartbeats() {
 	for rf.killed() == false {
-		rf.mu.Lock()
-		args := AppendEntriesArgs{}
-		args.Term = rf.currentTerm
-		args.LeaderId = rf.me
-		rf.mu.Unlock()
 		for peer := range rf.peers {
 			if peer != rf.me {
-				reply := AppendEntriesReply{}
-				ok := rf.sendAppendEntries(peer, &args, &reply)
-				if !ok {
-					return
-				}
-				rf.mu.Lock()
-				if reply.Term > rf.currentTerm {
-					rf.switchToFollower(reply.Term)
-				}
-				rf.mu.Unlock()
+				go func(peer int) {
+					args := AppendEntriesArgs{}
+					rf.mu.Lock()
+					args.Term = rf.currentTerm
+					args.LeaderId = rf.me
+					rf.mu.Unlock()
+					reply := AppendEntriesReply{}
+					if rf.sendAppendEntries(peer, &args, &reply) {
+						rf.mu.Lock()
+						if reply.Term > rf.currentTerm {
+							rf.switchToFollower(reply.Term)
+						}
+						rf.mu.Unlock()
+					}
+				}(peer)
 			}
 		}
 		time.Sleep(HeartbeatTime * time.Millisecond)
@@ -386,13 +386,20 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		DPrintf("Reached here %d % d %d %t", rf.state, time.Since(rf.lastHeatbeatTime).Milliseconds(), rf.electionTimeout, rf.state != int(Leader))
-		if rf.state != int(Leader) {
+		// DPrintf("Reached here %d % d %d %t", rf.state, time.Since(rf.lastHeatbeatTime).Milliseconds(), rf.electionTimeout, rf.state != int(Leader))
+		rf.mu.Lock()
+		state := rf.state
+		rf.mu.Unlock()
+		if state != int(Leader) {
 			DPrintf("Reached here 2")
-			if time.Since(rf.lastHeatbeatTime).Milliseconds() > rf.electionTimeout {
+			rf.mu.Lock()
+			hasTimedOut := time.Since(rf.lastHeatbeatTime).Milliseconds() > rf.electionTimeout
+			rf.mu.Unlock()
+			if hasTimedOut {
+				// rf.mu.Unlock()
 				// Start election
+				// rf.mu.Lock()
 				rf.mu.Lock()
-
 				rf.state = int(Candidate)
 				rf.currentTerm++
 				rf.votedFor = rf.me
@@ -411,14 +418,14 @@ func (rf *Raft) ticker() {
 							reply := RequestVoteReply{}
 							DPrintf("Server %d Sending vote request to %d", rf.me, peer)
 							ok := rf.sendRequestVote(peer, &args, &reply)
+							rf.mu.Lock()
+							defer rf.mu.Unlock()
 							if !ok {
 								DPrintf("raft%v[%v] vote:raft%v no reply, currentTerm:%v\n", rf.me, rf.state, peer, rf.currentTerm)
 							}
 							DPrintf("ReqVote reply term=%d voteGranted=%t", reply.Term, reply.VoteGranted)
-							rf.mu.Lock()
-							defer rf.mu.Unlock()
 
-							// If seend bigger term step down
+							// If seen bigger term step down
 							if reply.Term > rf.currentTerm {
 								rf.switchToFollower(reply.Term)
 							}
@@ -438,8 +445,12 @@ func (rf *Raft) ticker() {
 						}(peer)
 					}
 				}
-
+				rf.mu.Lock()
+				rf.lastHeatbeatTime = time.Now()
+				rf.electionTimeout = rf.generateRandom()
+				rf.mu.Unlock()
 			}
+
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
@@ -448,7 +459,7 @@ func (rf *Raft) ticker() {
 func (rf *Raft) generateRandom() int64 {
 	// rand.Seed(time.Now().UnixNano())
 	// return rand.Intn(HeartbeatTime) + 300
-	rand.Seed(int64(rf.me) * 1000)
+	rand.Seed(time.Now().UnixNano())
 	return rand.Int63n(100) + 300
 }
 
@@ -477,7 +488,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 
-	DPrintf("Make states %d %d %d %d", Follower, Candidate, Leader, HeartbeatTime)
+	// DPrintf("Make states %d %d %d %d", Follower, Candidate, Leader, HeartbeatTime)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
