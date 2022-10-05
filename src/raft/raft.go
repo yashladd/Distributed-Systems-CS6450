@@ -224,7 +224,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//|| rf.votedFor == args.CandidateId
 
-	if rf.votedFor == -1 {
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		DPrintf("raft%v vote for raft%v\n", rf.me, args.CandidateId)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
@@ -380,7 +380,6 @@ func (rf *Raft) ticker() {
 		state := rf.state
 		me := rf.me
 		timeoutDuration := rf.electionTimeout
-
 		rf.mu.Unlock()
 
 		if state == int(Leader) {
@@ -393,14 +392,16 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 			DPrintf("Follower ---> raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
 			rf.mu.Unlock()
-			// DPrintf("raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
 
 			time.Sleep(time.Duration(timeoutDuration) * time.Millisecond)
 			rf.mu.Lock()
-			// lastHearRec := rf.lastHeatbeatTime
 			DPrintf("raft[%d] Time since last heart %d", rf.me, time.Since(rf.lastHeatbeatTime).Milliseconds())
 			startElection := time.Since(rf.lastHeatbeatTime).Milliseconds() > HeartbeatTime
 			rf.mu.Unlock()
+
+			if rf.state == int(Leader) {
+				continue
+			}
 
 			if startElection {
 				rf.mu.Lock()
@@ -421,10 +422,10 @@ func (rf *Raft) ticker() {
 							reply := RequestVoteReply{}
 							ok := rf.sendRequestVote(peer, &args, &reply)
 							if !ok {
+								DPrintf("request vote failed reqby[%d] to raft[%d]", me, peer)
 								voteCh <- true
 								return
 							}
-							// Check if it should be !=
 							rf.mu.Lock()
 							if reply.Term > rf.currentTerm {
 								rf.switchToFollower(reply.Term)
@@ -438,22 +439,28 @@ func (rf *Raft) ticker() {
 							}
 							rf.mu.Unlock()
 							DPrintf("Sending %d", peer)
-							voteCh <- true
+							select {
+							case voteCh <- true:
+							default:
+							}
 						}(peer)
 					}
 				}
 
 				for i := 0; i < len(rf.peers)-1; i++ {
-					DPrintf("Waiting %d", i)
+					// DPrintf("Waiting %d", i)
 					<-voteCh
-					DPrintf("Received %d", i)
+					// DPrintf("Received %d", i)
 					rf.mu.Lock()
+					DPrintf("Election Raft[%d]state[%d]term[%d]", rf.me, rf.state, rf.currentTerm)
 					// if rf.state == int(Candidate) {
 					voteMu.Lock()
+					DPrintf("Election vote count Raft[%d]state[%d]term[%d] %d", rf.me, rf.state, rf.currentTerm, voteCount)
 					if voteCount > len(rf.peers)/2 {
 						rf.state = int(Leader)
 						rf.mu.Unlock()
 						voteMu.Unlock()
+						rf.sendHeartbeats()
 						break
 					}
 					voteMu.Unlock()
@@ -474,7 +481,7 @@ func (rf *Raft) generateRandom() int {
 	// rand.Seed(time.Now().UnixNano())
 	// return rand.Intn(HeartbeatTime) + 300
 	rand.Seed(time.Now().UnixNano())
-	return (rand.Intn(200)) + rand.Intn(100) + 200
+	return rand.Intn(100) + rand.Intn(100) + 200
 }
 
 //
@@ -504,6 +511,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	DPrintf("Starting")
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
