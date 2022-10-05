@@ -224,7 +224,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//|| rf.votedFor == args.CandidateId
 
-	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+	if rf.votedFor == -1 {
 		DPrintf("raft%v vote for raft%v\n", rf.me, args.CandidateId)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
@@ -379,24 +379,25 @@ func (rf *Raft) ticker() {
 		rf.mu.Lock()
 		state := rf.state
 		me := rf.me
-		timeoutDuration := rf.electionTimeout
 		rf.mu.Unlock()
 
 		if state == int(Leader) {
-			rf.mu.Lock()
-			DPrintf("Leader ---> raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
-			rf.mu.Unlock()
+			// rf.mu.Lock()
+			// DPrintf("Leader ---> raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
+			// rf.mu.Unlock()
 			rf.sendHeartbeats()
 			time.Sleep(HeartbeatTime * time.Millisecond)
 		} else {
-			rf.mu.Lock()
-			DPrintf("Follower ---> raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
-			rf.mu.Unlock()
+			// rf.mu.Lock()
+			// DPrintf("Follower ---> raft[%d]term[%d], electiontimeout[%d]", me, rf.currentTerm, timeoutDuration)
+			// rf.mu.Unlock()
+
+			timeoutDuration := rf.generateRandom()
 
 			time.Sleep(time.Duration(timeoutDuration) * time.Millisecond)
 			rf.mu.Lock()
 			DPrintf("raft[%d] Time since last heart %d", rf.me, time.Since(rf.lastHeatbeatTime).Milliseconds())
-			startElection := time.Since(rf.lastHeatbeatTime).Milliseconds() > HeartbeatTime
+			startElection := time.Since(rf.lastHeatbeatTime).Milliseconds() > int64(timeoutDuration)
 			rf.mu.Unlock()
 
 			if rf.state == int(Leader) {
@@ -416,29 +417,28 @@ func (rf *Raft) ticker() {
 				voteCh := make(chan bool)
 				var voteMu sync.Mutex
 				voteCount := 1
+
 				for peer := range rf.peers {
 					if peer != me {
 						go func(peer int) {
 							reply := RequestVoteReply{}
 							ok := rf.sendRequestVote(peer, &args, &reply)
-							if !ok {
-								DPrintf("request vote failed reqby[%d] to raft[%d]", me, peer)
-								voteCh <- true
-								return
+							if ok {
+								rf.mu.Lock()
+								if reply.Term > rf.currentTerm {
+									rf.switchToFollower(reply.Term)
+								} else if reply.VoteGranted {
+									voteMu.Lock()
+									voteCount = voteCount + 1
+									// if voteCount > len(rf.peers)/2 {
+									// 	rf.state = int(Leader)
+									// }
+									voteMu.Unlock()
+								}
+								rf.mu.Unlock()
+								DPrintf("Sending %d", peer)
 							}
-							rf.mu.Lock()
-							if reply.Term > rf.currentTerm {
-								rf.switchToFollower(reply.Term)
-							} else if reply.VoteGranted {
-								voteMu.Lock()
-								voteCount = voteCount + 1
-								// if voteCount > len(rf.peers)/2 {
-								// 	rf.state = int(Leader)
-								// }
-								voteMu.Unlock()
-							}
-							rf.mu.Unlock()
-							DPrintf("Sending %d", peer)
+
 							select {
 							case voteCh <- true:
 							default:
@@ -447,31 +447,48 @@ func (rf *Raft) ticker() {
 					}
 				}
 
-				for i := 0; i < len(rf.peers)-1; i++ {
-					// DPrintf("Waiting %d", i)
-					<-voteCh
-					// DPrintf("Received %d", i)
-					rf.mu.Lock()
-					DPrintf("Election Raft[%d]state[%d]term[%d]", rf.me, rf.state, rf.currentTerm)
-					// if rf.state == int(Candidate) {
-					voteMu.Lock()
-					DPrintf("Election vote count Raft[%d]state[%d]term[%d] %d", rf.me, rf.state, rf.currentTerm, voteCount)
-					if voteCount > len(rf.peers)/2 {
-						rf.state = int(Leader)
-						rf.mu.Unlock()
-						voteMu.Unlock()
-						rf.sendHeartbeats()
-						break
-					}
-					voteMu.Unlock()
-					// }
-					rf.mu.Unlock()
-				}
+				go func() {
+					for i := 0; i < len(rf.peers)-1; i++ {
+						// DPrintf("Waiting %d", i)
+						<-voteCh
+						// DPrintf("Received %d", i)
+						rf.mu.Lock()
+						DPrintf("Election Raft[%d]state[%d]term[%d]", rf.me, rf.state, rf.currentTerm)
 
+						startElection = time.Since(rf.lastHeatbeatTime).Milliseconds() > int64(timeoutDuration)
+						rf.mu.Unlock()
+
+						if !startElection {
+							rf.mu.Lock()
+							rf.state = int(Follower)
+							rf.mu.Unlock()
+							break
+						}
+
+						rf.mu.Lock()
+						if rf.state != int(Candidate) {
+							rf.mu.Unlock()
+							break
+						}
+
+						// if rf.state == int(Candidate) {
+						voteMu.Lock()
+						DPrintf("Election vote count Raft[%d]state[%d]term[%d] %d", rf.me, rf.state, rf.currentTerm, voteCount)
+						if voteCount > len(rf.peers)/2 && rf.state == int(Candidate) {
+							rf.state = int(Leader)
+							rf.mu.Unlock()
+							voteMu.Unlock()
+							break
+						}
+						voteMu.Unlock()
+						rf.mu.Unlock()
+					}
+				}()
+			} else {
+				rf.mu.Lock()
+				rf.state = int(Follower)
+				rf.mu.Unlock()
 			}
-			rf.mu.Lock()
-			rf.electionTimeout = rf.generateRandom()
-			rf.mu.Unlock()
 		}
 
 	}
