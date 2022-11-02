@@ -221,9 +221,6 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int  //currentTerm, for leader to update itself
 	Success bool //true if follower contained entry matching prevLogIndex and prevLogTerm
-
-	IncorrectIndex int
-	IncorrectTerm  int
 }
 
 //
@@ -384,7 +381,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	reply.Success, reply.Term = false, rf.currentTerm
-	reply.IncorrectIndex, reply.IncorrectTerm = -1, -1
 
 	rf.heartbeatTicker.reset()
 
@@ -396,7 +392,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if prevIndex < args.PrevLogIndex {
 		// fmt.Printf("Server[%v] prevIdx smaller, mylog[%v], cmtidx[%d]\n", rf.me, rf.log, rf.commitIndex)
-		reply.IncorrectIndex = prevIndex + 1
 		return
 	}
 
@@ -453,10 +448,7 @@ func (rf *Raft) handleAppendEntries() {
 			// fmt.Print("ae ", rf.me, rf.log, rf.nextIndex, rf.matchIndex)
 			args.PrevLogIndex = rf.nextIndex[peer] - 1
 			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-
-			// entries :=
 			args.Entries = rf.log[args.PrevLogIndex+1:]
-			// copy(args.Entries, entries)
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntriesReply{}
 			// if prevLogLen != len(rf.log) {
