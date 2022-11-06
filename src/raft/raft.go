@@ -224,8 +224,9 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int  //currentTerm, for leader to update itself
-	Success bool //true if follower contained entry matching prevLogIndex and prevLogTerm
+	Term        int  //currentTerm, for leader to update itself
+	Success     bool //true if follower contained entry matching prevLogIndex and prevLogTerm
+	ConflictIdx int
 }
 
 //
@@ -382,12 +383,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// DPrintf("leader[raft%v][term:%v] beat term:%v [raft%v][%v]\n", args.LeaderId, args.Term, rf.currentTerm, rf.me, rf.state)
 	DPrintf("Leader %d term %d append raft[%d]term[%d]state[%d]", args.LeaderId, args.Term, rf.me, rf.currentTerm, rf.state)
 	// fmt.Printf("Raft[%v] recv appent with args => %v mylog => %v len=%v\n", rf.me, args, rf.log, len(rf.log))
+	reply.Success, reply.Term = false, rf.currentTerm
+	reply.ConflictIdx = 1
+
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
 	}
-	reply.Success, reply.Term = false, rf.currentTerm
 
 	rf.heartbeatTicker.reset()
 
@@ -399,12 +402,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if prevIndex < args.PrevLogIndex {
 		// fmt.Printf("Server[%v] prevIdx smaller, mylog[%v], cmtidx[%d]\n", rf.me, rf.log, rf.commitIndex)
+		reply.ConflictIdx = len(rf.log)
 		return
 	}
 
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		rf.log = rf.log[:prevIndex]
 		// fmt.Printf("Server[%x]Term not eq app, mylog[%v] cmtidx[%d]\n", rf.me, rf.log, rf.commitIndex)
+		conflictTerm := rf.log[args.PrevLogIndex].Term
+		index := args.PrevLogIndex
+		for i := index; i >= 1 && rf.log[index].Term == conflictTerm; i = i - 1 {
+			index = i
+		}
+		reply.ConflictIdx = index
+		rf.log = rf.log[:prevIndex]
 		return
 	}
 
@@ -469,6 +479,8 @@ func (rf *Raft) handleAppendEntries() {
 					rf.mu.Lock()
 					if reply.Term > rf.currentTerm {
 						rf.switchToFollower(reply.Term)
+						rf.mu.Unlock()
+						return
 					}
 
 					if args.Term != rf.currentTerm || rf.state != int(Leader) {
@@ -481,10 +493,11 @@ func (rf *Raft) handleAppendEntries() {
 						rf.matchIndex[peer] = rf.nextIndex[peer] - 1
 					} else {
 						// fmt.Println("Not success")
-						currNextIdx := rf.nextIndex[peer]
-						if currNextIdx-1 >= 1 {
-							rf.nextIndex[peer] = currNextIdx - 1
-						}
+						// currNextIdx := rf.nextIndex[peer]
+						nextInd := reply.ConflictIdx
+						rf.nextIndex[peer] = nextInd
+						// if nextInd >= 1 {
+						// }
 					}
 
 					nextCommitIndex := rf.getMaxCommitIdx()
@@ -543,7 +556,7 @@ func (rf *Raft) appyLogEntries() {
 		rf.mu.Lock()
 		index := rf.lastApplied + 1
 		if index < len(rf.log) && index <= rf.commitIndex {
-			fmt.Printf("server[%v] state=[%v], commit index %v, lastApplied : %v, len : %v, log : %v\n", rf.me, rf.state, rf.commitIndex, rf.lastApplied, len(rf.log), rf.log)
+			// fmt.Printf("server[%v] state=[%v], commit index %v, lastApplied : %v, len : %v, log : %v\n", rf.me, rf.state, rf.commitIndex, rf.lastApplied, len(rf.log), rf.log)
 			msg := ApplyMsg{true, rf.log[index].Command, index, false, []byte{}, 0, 0}
 			rf.lastApplied = index
 			index = index + 1
@@ -661,7 +674,7 @@ func (rf *Raft) startElection() {
 							for i := 0; i < len(rf.matchIndex); i++ {
 								rf.matchIndex[i] = 0
 							}
-							fmt.Printf("Init Leader[%v], ni %v mi %v\n", rf.me, rf.nextIndex, rf.matchIndex)
+							// fmt.Printf("Init Leader[%v], ni %v mi %v\n", rf.me, rf.nextIndex, rf.matchIndex)
 
 							rf.mu.Unlock()
 							go rf.sendHeartbeats()
