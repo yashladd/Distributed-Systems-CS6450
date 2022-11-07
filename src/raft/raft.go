@@ -456,6 +456,9 @@ func (rf *Raft) handleAppendEntries() {
 	defer rf.mu.Unlock()
 
 	me := rf.me
+	if rf.state != int(Leader) {
+		return
+	}
 	// fmt.Printf("Leader[%v] log %v\n", rf.me, rf.log)
 
 	for peer := range rf.peers {
@@ -466,7 +469,9 @@ func (rf *Raft) handleAppendEntries() {
 			// fmt.Print("ae ", rf.me, rf.log, rf.nextIndex, rf.matchIndex)
 			args.PrevLogIndex = rf.nextIndex[peer] - 1
 			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-			args.Entries = rf.log[args.PrevLogIndex+1:]
+			entries := rf.log[args.PrevLogIndex+1:]
+			args.Entries = make([]LogEntry, len(entries))
+			copy(args.Entries, entries)
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntriesReply{}
 			// if prevLogLen != len(rf.log) {
@@ -477,6 +482,7 @@ func (rf *Raft) handleAppendEntries() {
 			go func(peer int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
 				if rf.sendAppendEntries(peer, args, reply) {
 					rf.mu.Lock()
+
 					if reply.Term > rf.currentTerm {
 						rf.switchToFollower(reply.Term)
 						rf.mu.Unlock()
@@ -491,6 +497,19 @@ func (rf *Raft) handleAppendEntries() {
 					if reply.Success {
 						rf.nextIndex[peer] = args.PrevLogIndex + len(args.Entries) + 1
 						rf.matchIndex[peer] = rf.nextIndex[peer] - 1
+						nextCommitIndex := rf.getMaxCommitIdx()
+						// shouldCommit := nextCommitIndex > rf.commitIndex
+
+						if nextCommitIndex > rf.commitIndex {
+							rf.commitIndex = nextCommitIndex
+							rf.mu.Unlock()
+							// if rf.commitIndex > rf.lastApplied {
+							// 	rf.mu.Unlock()
+							// 	go rf.appyLogEntries()
+							// }
+						} else {
+							rf.mu.Unlock()
+						}
 					} else {
 						// fmt.Println("Not success")
 						// currNextIdx := rf.nextIndex[peer]
@@ -498,19 +517,6 @@ func (rf *Raft) handleAppendEntries() {
 						rf.nextIndex[peer] = nextInd
 						// if nextInd >= 1 {
 						// }
-					}
-
-					nextCommitIndex := rf.getMaxCommitIdx()
-					// shouldCommit := nextCommitIndex > rf.commitIndex
-
-					if nextCommitIndex > rf.commitIndex {
-						rf.commitIndex = nextCommitIndex
-						rf.mu.Unlock()
-						// if rf.commitIndex > rf.lastApplied {
-						// 	rf.mu.Unlock()
-						// 	go rf.appyLogEntries()
-						// }
-					} else {
 						rf.mu.Unlock()
 					}
 
