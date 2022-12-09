@@ -10,7 +10,9 @@ import (
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	leader int
+	leader      int
+	clerkId     int64
+	operationId int
 }
 
 func nrand() int64 {
@@ -24,7 +26,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
-	ck.leader = 0
+	ck.clerkId = nrand()
 	return ck
 }
 
@@ -43,8 +45,11 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	args := GetArgs{}
+	opId := ck.operationId + 1
+	var args GetArgs
 	args.Key = key
+	args.OpId = opId
+	args.ClerkId = ck.clerkId
 	value := ""
 
 	for {
@@ -72,11 +77,14 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
-
-	args := PutAppendArgs{}
+	opId := ck.operationId + 1
+	ck.operationId = opId
+	var args PutAppendArgs
 	args.Key = key
 	args.Value = value
 	args.Op = op
+	args.OpId = opId
+	args.ClerkId = ck.clerkId
 
 	for {
 		var reply PutAppendReply
